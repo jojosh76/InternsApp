@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <base href="$FLUTTER_BASE_HREF">
+
+  <meta charset="UTF-8">
+  <meta http-equiv="X-UA-Compatible" content="IE=Edge">
+  <meta name="description" content="Flutter Web Voice Chat App">
+
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black">
+  <meta name="apple-mobile-web-app-title" content="exemple">
+
+  <link rel="apple-touch-icon" href="icons/Icon-192.png">
+  <link rel="icon" type="image/png" href="favicon.png">
+  <link rel="manifest" href="manifest.json">
+
+  <title>exemple</title>
+
+  <!-- 🎤 SPEECH TO TEXT -->
+  <script>
+    let recognition;
+
+    function startSpeech() {
+      if (!('webkitSpeechRecognition' in window)) {
+        alert("Speech recognition non supporté");
+        return;
+      }
+
+      recognition = new webkitSpeechRecognition();
+      recognition.lang = 'fr-FR';
+      recognition.interimResults = false;
+
+      recognition.onresult = function (event) {
+        const text = event.results[0][0].transcript;
+        window.dispatchEvent(
+          new CustomEvent("speechResult", { detail: text })
+        );
+      };
+
+      recognition.start();
+    }
+  </script>
+
+</head>
+
+<body>
+  <!-- 🎤 VOICE RECORDER -->
+  <script>
+    let mediaRecorder;
+    let audioChunks = [];
+
+    async function startVoice() {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      mediaRecorder = new MediaRecorder(stream);
+      audioChunks = [];
+
+      mediaRecorder.ondataavailable = e => audioChunks.push(e.data);
+
+      mediaRecorder.onstop = () => {
+        const blob = new Blob(audioChunks, { type: 'audio/webm' });
+        const reader = new FileReader();
+
+        reader.onloadend = () => {
+          window.dispatchEvent(
+            new CustomEvent("voiceMessage", { detail: reader.result })
+          );
+        };
+
+        reader.readAsDataURL(blob);
+      };
+
+      mediaRecorder.start();
+    }
+
+    function stopVoice() {
+      if (mediaRecorder) {
+        mediaRecorder.stop();
+      }
+    }
+  </script>
+
+  <!-- 🚀 FLUTTER -->
+  <script src="flutter_bootstrap.js" async></script>
+</body>
+</html>
