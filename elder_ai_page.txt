@@ -1,0 +1,229 @@
+import 'package:flutter/foundation.dart';
+import 'package:flutter/material.dart';
+import 'package:http/http.dart' as http;
+import 'dart:convert';
+
+import 'dart:html' as html;
+import 'dart:js' as js;
+
+class AIPage extends StatefulWidget {
+  const AIPage({super.key});
+
+  @override
+  State<AIPage> createState() => _AIPageState();
+}
+
+class _AIPageState extends State<AIPage> {
+  final TextEditingController _controller = TextEditingController();
+  final ScrollController _scrollController = ScrollController();
+  final List<Map<String, String>> _messages = [];
+
+  bool _isRecording = false;
+  bool _isLoading = false;
+
+  /// 🔥 URL DE TON EDGE FUNCTION SUPABASE
+  static const String _supabaseFunctionUrl =
+      'https://zgtxzbmhksidcjnqotbx.supabase.co/functions/v1/hf-chat';
+
+  @override
+  void initState() {
+    super.initState();
+    if (kIsWeb) _setupVoiceListener();
+  }
+
+  void _setupVoiceListener() {
+    html.window.addEventListener('voiceMessage', (event) {
+      if (!mounted) return;
+      final audioUrl = (event as html.CustomEvent).detail;
+      setState(() {
+        _messages.add({"role": "user", "type": "audio", "data": audioUrl});
+      });
+      _sendToBackend("L'utilisateur a envoyé un message vocal.");
+    });
+  }
+
+  /// ✅ APPEL SUPABASE AVEC AUTHENTIFICATION
+  Future<void> _sendToBackend(String userText) async {
+    if (!mounted) return;
+    setState(() => _isLoading = true);
+
+    // ⚠️ RÉCUPÈRE TA CLÉ ANON SUR LE DASHBOARD SUPABASE (Settings > API)
+    const String supabaseAnonKey = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InpndHh6Ym1oa3NpZGNqbnFvdGJ4Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjgzODMxMjUsImV4cCI6MjA4Mzk1OTEyNX0.JjmTxf2ODCEiTruXe2QZMbs9x0YRos0zZx7sCyeuHLg";
+
+    try {
+      final response = await http.post(
+        Uri.parse(_supabaseFunctionUrl),
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer $supabaseAnonKey',
+          'apikey': supabaseAnonKey, // CRUCIAL : Supabase en a besoin pour router la requête
+        },
+        body: jsonEncode({
+          "message": userText,
+        }),
+      );
+
+      final data = jsonDecode(response.body);
+
+      if (response.statusCode == 200) {
+        final aiText = data["reply"] ?? "Réponse vide.";
+        setState(() {
+          _messages.add({
+            "role": "ai",
+            "type": "text",
+            "data": aiText,
+          });
+        });
+      } else {
+        // Affiche le message d'erreur propre qu'on a codé dans l'index.ts
+        throw Exception(data["reply"] ?? response.body);
+      }
+    } catch (e) {
+      setState(() {
+        _messages.add({
+          "role": "ai",
+          "type": "text",
+          "data": "❌ $e",
+        });
+      });
+    } finally {
+      setState(() => _isLoading = false);
+      _scrollToBottom();
+    }
+  }
+
+  void _sendText() {
+    final text = _controller.text.trim();
+    if (text.isEmpty) return;
+
+    setState(() {
+      _messages.add({"role": "user", "type": "text", "data": text});
+      _controller.clear();
+    });
+
+    _scrollToBottom();
+    _sendToBackend(text);
+  }
+
+  void _scrollToBottom() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (_scrollController.hasClients) {
+        _scrollController.animateTo(
+          _scrollController.position.maxScrollExtent,
+          duration: const Duration(milliseconds: 300),
+          curve: Curves.easeOut,
+        );
+      }
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text("AI Assistant"),
+        backgroundColor: Colors.blueAccent,
+        foregroundColor: Colors.white,
+      ),
+      body: Column(
+        children: [
+          Expanded(
+            child: ListView.builder(
+              controller: _scrollController,
+              padding: const EdgeInsets.all(16),
+              itemCount: _messages.length,
+              itemBuilder: (context, index) {
+                final msg = _messages[index];
+                final isUser = msg["role"] == "user";
+                return _buildMessageBubble(msg, isUser);
+              },
+            ),
+          ),
+          if (_isLoading)
+            const LinearProgressIndicator(color: Colors.blueAccent),
+          _buildInputArea(),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildMessageBubble(Map<String, String> msg, bool isUser) {
+    return Align(
+      alignment: isUser ? Alignment.centerRight : Alignment.centerLeft,
+      child: Container(
+        margin: const EdgeInsets.only(bottom: 12),
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+        constraints: const BoxConstraints(maxWidth: 320),
+        decoration: BoxDecoration(
+          color: isUser ? Colors.blueAccent : Colors.grey[200],
+          borderRadius: BorderRadius.circular(20),
+        ),
+        child: msg["type"] == "audio" && kIsWeb
+            ? IconButton(
+                icon: const Icon(Icons.play_circle),
+                onPressed: () =>
+                    html.AudioElement(msg["data"]!).play(),
+              )
+            : Text(
+                msg["data"]!,
+                style: TextStyle(
+                  color: isUser ? Colors.white : Colors.black87,
+                ),
+              ),
+      ),
+    );
+  }
+
+  Widget _buildInputArea() {
+    return Container(
+      padding: const EdgeInsets.all(12),
+      child: Row(
+        children: [
+          GestureDetector(
+            onLongPress: kIsWeb
+                ? () {
+                    setState(() => _isRecording = true);
+                    js.context.callMethod("startVoice");
+                  }
+                : null,
+            onLongPressUp: kIsWeb
+                ? () {
+                    setState(() => _isRecording = false);
+                    js.context.callMethod("stopVoice");
+                  }
+                : null,
+            child: CircleAvatar(
+              backgroundColor:
+                  _isRecording ? Colors.red : Colors.blueAccent,
+              child: const Icon(Icons.mic, color: Colors.white),
+            ),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: TextField(
+              controller: _controller,
+              decoration: InputDecoration(
+                hintText: "Écrivez ici...",
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(30),
+                ),
+              ),
+              onSubmitted: (_) => _sendText(),
+            ),
+          ),
+          IconButton(
+            icon: const Icon(Icons.send, color: Colors.blueAccent),
+            onPressed: _sendText,
+          ),
+        ],
+      ),
+    );
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    _scrollController.dispose();
+    super.dispose();
+  }
+}
